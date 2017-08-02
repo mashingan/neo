@@ -8,8 +8,8 @@ license       = "Apache2"
 skipDirs      = @["tests", "benchmarks", "htmldocs"]
 skipFiles     = @["_config.yml"]
 
-requires "nim >= 0.17.0", "nimblas >= 0.1.3", "nimcuda >= 0.1.4",
-  "nimlapack >= 0.1.0"
+requires "nim >= 0.17.0", "nimblas >= 0.2.0", "nimcuda >= 0.1.4",
+  "nimlapack >= 0.1.1"
 
 --forceBuild
 
@@ -51,14 +51,20 @@ task testsparse, "run CPU sparse tests":
 
 task testopenblas, "run CPU tests on openblas":
   configForTests()
-  --define: openblas
+  --define:"blas=openblas"
+  --define:"lapack=openblas"
   setCommand "c", "tests/all.nim"
 
 task testmkl, "run CPU tests on mkl":
   configForTests()
+  --define:"blas=mkl_intel_lp64"
+  --clibdir: "/opt/intel/mkl/lib/intel64"
+  --passl: "/opt/intel/mkl/lib/intel64/libmkl_intel_lp64.a"
+  --passl: "-lmkl_core"
+  --passl: "-lmkl_sequential"
+  --passl: "-lpthread"
+  --passl: "-lm"
   --dynlibOverride:mkl_intel_lp64
-  --passL:"/home/papillon/.intel/mkl/lib/intel64/libmkl_intel_lp64.a"
-  --define: mkl
   setCommand "c", "tests/all.nim"
 
 task testcuda, "run GPU tests":
