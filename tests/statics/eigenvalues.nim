@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest, neo/dense
+import unittest, neo, neo/statics
 
 proc run() =
   suite "matrix reductions for eigenvalue computations":
     test "balancing matrices":
       let
-        a = matrix(@[
-          @[3.0, 1.0, 0.0, 0.0],
-          @[1.0, 0.0, 0.0, 0.0],
-          @[2.0, -1.0, 1.5, 0.1],
-          @[-1.0, 0.0, 1.1, 1.2],
+        a = matrix([
+          [3.0, 1.0, 0.0, 0.0],
+          [1.0, 0.0, 0.0, 0.0],
+          [2.0, -1.0, 1.5, 0.1],
+          [-1.0, 0.0, 1.1, 1.2],
         ])
         r = balance(a, BalanceOp.Permute)
 
@@ -30,11 +30,11 @@ proc run() =
       check(r.ihi == 4)
     test "computing the upper Hessenberg form":
       let
-        a = matrix(@[
-          @[3.0, 1.0, 0.0, 0.0],
-          @[1.0, 0.0, 0.0, 0.0],
-          @[2.0, -1.0, 1.5, 0.1],
-          @[-1.0, 0.0, 1.1, 1.2],
+        a = matrix([
+          [3.0, 1.0, 0.0, 0.0],
+          [1.0, 0.0, 0.0, 0.0],
+          [2.0, -1.0, 1.5, 0.1],
+          [-1.0, 0.0, 1.1, 1.2],
         ])
         r = hessenberg(a)
 
@@ -43,21 +43,21 @@ proc run() =
   suite "computing eigenvalues":
     test "computing the eigenvalues alone":
       let
-        a = matrix(@[
-          @[3.0, 1.0, 0.0, 0.0],
-          @[1.0, 0.0, 0.0, 0.0],
-          @[2.0, -1.0, 1.5, 0.1],
-          @[-1.0, 0.0, 1.1, 1.2],
+        a = matrix([
+          [3.0, 1.0, 0.0, 0.0],
+          [1.0, 0.0, 0.0, 0.0],
+          [2.0, -1.0, 1.5, 0.1],
+          [-1.0, 0.0, 1.1, 1.2],
         ])
         e = eigenvalues(a)
 
       check(e.img == @[0.0, 0.0, 0.0, 0.0])
     test "computing the eigenvalues of a known matrix":
       let
-        a = matrix(@[
-          @[2.0, 0.0, 1.0],
-          @[0.0, 2.0, 0.0],
-          @[1.0, 0.0, 2.0]
+        a = matrix([
+          [2.0, 0.0, 1.0],
+          [0.0, 2.0, 0.0],
+          [1.0, 0.0, 2.0]
         ])
         e = eigenvalues(a)
 
@@ -66,14 +66,14 @@ proc run() =
 
     test "computing the Schur factorization":
       let
-        a = matrix(@[
-          @[2.0, 0.0, 1.0],
-          @[0.0, 2.0, 0.0],
-          @[1.0, 0.0, 2.0]
+        a = matrix([
+          [2.0, 0.0, 1.0],
+          [0.0, 2.0, 0.0],
+          [1.0, 0.0, 2.0]
         ])
         s = schur(a)
 
-      check(s.factorization == diag(3.0, 1.0, 2.0))
+      check(s.factorization == diag([3.0, 1.0, 2.0]))
       check(s.eigenvalues.real == @[3.0, 1.0, 2.0])
       check(s.eigenvalues.img == @[0.0, 0.0, 0.0])
 

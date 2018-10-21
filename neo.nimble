@@ -1,14 +1,14 @@
 mode = ScriptMode.Verbose
 
 packageName   = "neo"
-version       = "0.1.3"
+version       = "0.2.3"
 author        = "Andrea Ferretti"
 description   = "Linear Algebra for Nim"
 license       = "Apache2"
 skipDirs      = @["tests", "benchmarks", "htmldocs"]
 skipFiles     = @["_config.yml"]
 
-requires "nim >= 0.17.0", "nimblas >= 0.2.0", "nimcuda >= 0.1.4",
+requires "nim >= 0.18.0", "nimblas >= 0.2.0", "nimcuda >= 0.1.4",
   "nimlapack >= 0.1.1"
 
 --forceBuild
@@ -49,6 +49,15 @@ task testsparse, "run CPU sparse tests":
   configForTests()
   setCommand "c", "tests/tsparse.nim"
 
+task teststatic, "run CPU static tests":
+  configForTests()
+  setCommand "c", "tests/tstatics.nim"
+
+task testshared, "run CPU shared heap tests":
+  configForTests()
+  --threads:on
+  setCommand "c", "tests/tshared.nim"
+
 task testopenblas, "run CPU tests on openblas":
   configForTests()
   --define:"blas=openblas"
@@ -66,6 +75,16 @@ task testmkl, "run CPU tests on mkl":
   --passl: "-lm"
   --dynlibOverride:mkl_intel_lp64
   setCommand "c", "tests/all.nim"
+
+task compilecuda, "only compile GPU tests (when not having a GPU)":
+  --hints: off
+  --linedir: on
+  --stacktrace: on
+  --linetrace: on
+  --debuginfo
+  --path: "."
+  --compileOnly
+  setCommand "c", "tests/allcuda.nim"
 
 task testcuda, "run GPU tests":
   configForTests()

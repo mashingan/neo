@@ -34,12 +34,14 @@ Table of contents
     - [BLAS Operations](#blas-operations)
     - [Universal functions](#universal-functions)
     - [Rewrite rules](#rewrite-rules)
+    - [Stacking vectors and matrices](#stacking-vectors-and-matrices)
     - [Solving linear systems](#solving-linear-systems)
     - [Computing eigenvalues and eigenvectors](#computing-eigenvalues-and-eigenvectors)
   - [Sparse linear algebra](#sparse-linear-algebra)
 - [Working on the GPU](#working-on-the-gpu)
   - [Dense linear algebra](#dense-linear-algebra-1)
   - [Sparse linear algebra](#sparse-linear-algebra-1)
+- [Static typing for dimensions](#static-typing-for-dimensions)
 - [Design](#design)
   - [On the CPU](#on-the-cpu)
   - [Why fields are public](#why-fields-are-public)
@@ -98,7 +100,8 @@ let
   v3 = constantVector(5, 3.5)
   v4 = zeros(8)
   v5 = ones(9)
-  v6 = vector(1.0, 2.0, 3.0, 4.0, 5.0) # `vector` also accepts a seq
+  v6 = vector(1.0, 2.0, 3.0, 4.0, 5.0)
+  v7 = vector([1.2, 3.4, 5.6])
   m1 = makeMatrix(6, 3, proc(i, j: int): float64 = (i + j).float64)
   m2 = randomMatrix(2, 8, max = 1.6) # max is optional, default 1
   m3 = constantMatrix(3, 5, 1.8, order = rowMajor) # order is optional, default colMajor
@@ -129,14 +132,15 @@ let
   v3 = constantVector(5, 3.5'f32)
   v4 = zeros(8, float32)
   v5 = ones(9, float32)
-  v6 = vector(@[1'f32, 2'f32, 3'f32, 4'f32, 5'f32]) # this `seq` shares data with the vector
+  v6 = vector(1'f32, 2'f32, 3'f32, 4'f32, 5'f32)
+  v7 = vector([1.2'f32, 3.4'f32, 5.6'f32])
   m1 = makeMatrix(6, 3, proc(i, j: int): float32 = (i + j).float32)
   m2 = randomMatrix(2, 8, max = 1.6'f32)
   m3 = constantMatrix(3, 5, 1.8'f32, order = rowMajor) # order is optional, default colMajor
   m4 = ones(3, 6, float32)
   m5 = zeros(5, 2, float32)
   m6 = eye(7, float32)
-  m7: Matrix32[2, 3] = matrix(@[
+  m7 = matrix(@[
     @[1.2'f32, 3.5'f32, 4.3'f32],
     @[1.1'f32, 4.2'f32, 1.7'f32]
   ])
@@ -450,6 +454,62 @@ echo v1 + 5.3 * v2
 this is not implemented as a scalar multiplication followed by a sum, but it
 is turned into a single function call.
 
+#### Stacking vectors and matrices
+
+Vectors can be stacked both horizontally (which gives a new vector)
+
+```nim
+let
+  v1 = vector([1.0, 2.0])
+  v2 = vector([5.0, 7.0, 9.0])
+  v3 = vector([9.9, 8.8, 7.7, 6.6])
+
+echo hstack(v1, v2, v3) #  vector([1.0, 2.0, 5.0, 7.0, 9.0, 9.9, 8.8, 7.7, 6.6])
+```
+
+or vertically (which gives a matrix having the vectors as rows)
+
+```nim
+let
+  v1 = vector([1.0, 2.0, 3.0])
+  v2 = vector([5.0, 7.0, 9.0])
+  v3 = vector([9.9, 8.8, 7.7])
+
+echo vstack(v1, v2, v3)
+# matrix(@[
+#   @[1.0, 2.0, 3.0],
+#   @[5.0, 7.0, 9.0],
+#   @[9.9, 8.8, 7.7]
+# ])
+```
+
+Also, `concat` is an alias for `hstack`.
+
+Matrices can be stacked similarly, for instance
+
+```nim
+let
+  m1 = matrix(@[
+    @[1.0, 2.0],
+    @[3.0, 4.0]
+  ])
+  m2 = matrix(@[
+    @[5.0, 7.0, 9.0],
+    @[6.0, 2.0, 1.0]
+  ])
+  m3 = matrix(@[
+    @[2.0, 2.0],
+    @[1.0, 3.0]
+  ])
+echo hstack(m1, m2, m3)
+# m = matrix(@[
+#   @[1.0, 2.0, 5.0, 7.0, 9.0, 2.0, 2.0],
+#   @[3.0, 4.0, 6.0, 2.0, 1.0, 1.0, 3.0]
+# ])
+```
+
+TODO: stack matrices
+
 #### Solving linear systems
 
 Some linear algebraic functions are included, currently for solving systems of
@@ -519,6 +579,62 @@ For more information, look at the tests in `tests/cudadense`.
 
 To be documented.
 
+## Static typing for dimensions
+
+Under `neo/statics` there exist types that encode vectors and matrices whose
+dimensions are known at compile time. They are defined as aliases of their
+dynamic counterparts:
+
+```nim
+type
+  StaticVector*[N: static[int]; A] = distinct Vector[A]
+  StaticMatrix*[M, N: static[int]; A] = distinct Matrix[A]
+```
+
+In this way, these types are fully interoperable with the dynamic ones.
+One can freely convert between the two representations:
+
+```nim
+import neo, neo/statics
+
+let
+  u = randomVector(5) # static, of known dimension 5
+  v = u.asDynamic
+  w = v.asStatic(5)
+
+assert(u == w)
+```
+
+All operations implemented by neo are also avaiable for static vectors and
+matrices. The difference are that:
+
+* operations on static vectors and matrices will not compile if the dimensions
+  do not match
+* operations on static vectors and matrices will return other static vectors and
+  matrices, thereby automatically tracking dimensions.
+
+An example of an operation that will not compile is
+
+```nim
+import neo, neo/statics
+
+let
+  m = statics.randomMatrix(5, 7) # static, of known dimension 5x7
+  n = statics.randomMatrix(4, 6) # static, of known dimension 4x6
+  p = statics.randomMatrix(7, 3) # static, of known dimension 7x3
+
+discard m * n # this will not compile
+let x = m * p # this will infer dimension 5x3
+```
+
+By converting back and forth between static and dynamic vectors and matrices -
+which can be done at no cost - one can incorporate data whose dimension is only
+known at runtime, while at the same time having guaranteed dimension
+compatibility whenever enough information is known at compile time.
+
+For now, statics are only available on the CPU. It would be a nice contribution
+to extend this to GPU types.
+
 ## Design
 
 ### On the CPU
@@ -579,7 +695,9 @@ leave `data` nil. This allows to support
 * matrices and vectors with data on the stack, which can be constructed
   using the `stackVector` and `stackMatrix` constructors (and which are
   only valid as long as the relevant data lives on the stack), and
-* matrices and vectors allocated manually on the shared heap.
+* matrices and vectors allocated manually on the shared heap, which can
+  be constructed using the `sharedVector` and `sharedMatrix` constructors,
+  and destructed with `dealloc`.
 
 ### Why fields are public
 

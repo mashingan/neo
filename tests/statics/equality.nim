@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest, neo/dense
+import unittest, neo, neo/statics
 
 proc run() =
   suite "vector and matrix equality":
@@ -32,20 +32,16 @@ proc run() =
       check v != w
     test "strict matrix equality":
       let
-        M = 3
-        N = 5
-        m = makeMatrix(M, N, proc(i, j: int): float64 = (i + 3 * j).float64)
-        n = makeMatrix(M, N, proc(i, j: int): float64 = (i + 3 * j).float64)
-        p = makeMatrix(M, N, proc(i, j: int): float64 = (i - 2 * j).float64)
+        m = makeMatrix(3, 5, proc(i, j: int): float64 = (i + 3 * j).float64)
+        n = makeMatrix(3, 5, proc(i, j: int): float64 = (i + 3 * j).float64)
+        p = makeMatrix(3, 5, proc(i, j: int): float64 = (i - 2 * j).float64)
       check m == n
       check n != p
     test "strict 32-bit matrix equality":
       let
-        M = 3
-        N = 5
-        m = makeMatrix(M, N, proc(i, j: int): float32 = (i + 3 * j).float32)
-        n = makeMatrix(M, N, proc(i, j: int): float32 = (i + 3 * j).float32)
-        p = makeMatrix(M, N, proc(i, j: int): float32 = (i - 2 * j).float32)
+        m = makeMatrix(3, 5, proc(i, j: int): float32 = (i + 3 * j).float32)
+        n = makeMatrix(3, 5, proc(i, j: int): float32 = (i + 3 * j).float32)
+        p = makeMatrix(3, 5, proc(i, j: int): float32 = (i - 2 * j).float32)
       check m == n
       check n != p
     test "approximate vector equality":
@@ -70,12 +66,10 @@ proc run() =
       check w !=~ z
     test "approximate matrix equality":
       let
-        M = 3
-        N = 5
-        m = makeMatrix(M, N, proc(i, j: int): float64 = (i + 3 * j).float64)
-        n = makeMatrix(M, N, proc(i, j: int): float64 = (i + 3 * j).float64)
-        q = makeMatrix(M, N, proc(i, j: int): float64 = (i - 2 * j).float64)
-      var p = makeMatrix(M, N, proc(i, j: int): float64 = (i + 3 * j).float64)
+        m = makeMatrix(3, 5, proc(i, j: int): float64 = (i + 3 * j).float64)
+        n = makeMatrix(3, 5, proc(i, j: int): float64 = (i + 3 * j).float64)
+        q = makeMatrix(3, 5, proc(i, j: int): float64 = (i - 2 * j).float64)
+      var p = makeMatrix(3, 5, proc(i, j: int): float64 = (i + 3 * j).float64)
       p[2, 2] = p[2, 2] - 0.000000001
       p[1, 3] = p[1, 3] + 0.000000001
       check m =~ n
@@ -84,12 +78,10 @@ proc run() =
       check p !=~ q
     test "approximate 32-bit matrix equality":
       let
-        M = 3
-        N = 5
-        m = makeMatrix(M, N, proc(i, j: int): float32 = (i + 3 * j).float32)
-        n = makeMatrix(M, N, proc(i, j: int): float32 = (i + 3 * j).float32)
-        q = makeMatrix(M, N, proc(i, j: int): float32 = (i - 2 * j).float32)
-      var p = makeMatrix(M, N, proc(i, j: int): float32 = (i + 3 * j).float32)
+        m = makeMatrix(3, 5, proc(i, j: int): float32 = (i + 3 * j).float32)
+        n = makeMatrix(3, 5, proc(i, j: int): float32 = (i + 3 * j).float32)
+        q = makeMatrix(3, 5, proc(i, j: int): float32 = (i - 2 * j).float32)
+      var p = makeMatrix(3, 5, proc(i, j: int): float32 = (i + 3 * j).float32)
       p[2, 2] = p[2, 2] - 0.000001
       p[1, 3] = p[1, 3] + 0.000001
       check m =~ n

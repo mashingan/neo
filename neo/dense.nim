@@ -15,6 +15,7 @@ import nimblas, nimlapack, sequtils, random, math
 import ./core, ./private/neocommon
 
 export nimblas.OrderType
+export core
 
 type
   MatrixShape* = enum
@@ -98,6 +99,12 @@ proc stackVector*[N: static[int]](a: var Array32[N]): Vector[float32] =
 proc stackVector*[N: static[int]](a: var Array64[N]): Vector[float64] =
   Vector[float64](fp: addr a[0], len: N, step: 1)
 
+proc sharedVector*(N: int, A: typedesc): Vector[A] =
+  Vector[A](fp: cast[ptr A](allocShared0(N * sizeof(A))), len: N, step: 1)
+
+proc dealloc*[A](v: Vector[A]) =
+  deallocShared(cast[pointer](v.fp))
+
 proc makeVector*[A](N: int, f: proc (i: int): A): Vector[A] =
   result = vector(newSeq[A](N))
   for i in 0 ..< N:
@@ -110,10 +117,10 @@ template makeVectorI*[A](N: int, f: untyped): Vector[A] =
   result
 
 proc randomVector*(N: int, max: float64 = 1): Vector[float64] =
-  makeVectorI[float64](N, random(max))
+  makeVectorI[float64](N, rand(max))
 
 proc randomVector*(N: int, max: float32): Vector[float32] =
-  makeVectorI[float32](N, random(max).float32)
+  makeVectorI[float32](N, rand(max).float32)
 
 proc constantVector*[A](N: int, a: A): Vector[A] = makeVectorI[A](N, a)
 
@@ -160,10 +167,10 @@ template makeMatrixIJ*(A: typedesc, M1, N1: int, f: untyped, ord = colMajor): au
         r.data[i * N1 + j] = f
   r
 
-proc randomMatrix*[A: SomeReal](M, N: int, max: A = 1, order = colMajor): Matrix[A] =
+proc randomMatrix*[A: SomeFloat](M, N: int, max: A = 1, order = colMajor): Matrix[A] =
   result = matrix[A](order, M, N, newSeq[A](M * N))
   for i in 0 ..< (M * N):
-    result.data[i] = random(max)
+    result.data[i] = rand(max)
 
 proc randomMatrix*(M, N: int, order = colMajor): Matrix[float64] =
   randomMatrix(M, N, 1'f64, order)
@@ -193,28 +200,52 @@ proc eye*(N: int, A: typedesc[float64], order = colMajor): Matrix[float64] =
   makeMatrixIJ(float64, N, N, if i == j: 1 else: 0, order)
 
 proc matrix*[A](xs: seq[seq[A]], order = colMajor): Matrix[A] =
+  when compileOption("assertions"):
+    for x in xs:
+      checkDim(xs[0].len == x.len, "The dimensions do not match")
   makeMatrixIJ(A, xs.len, xs[0].len, xs[i][j], order)
 
-# TODO: buggy because of https://github.com/nim-lang/Nim/issues/5962
+proc matrix*[A](xs: seq[Vector[A]], order = colMajor): Matrix[A] =
+  when compileOption("assertions"):
+    for x in xs:
+      checkDim(xs[0].len == x.len, "The dimensions do not match")
+  makeMatrixIJ(A, xs.len, xs[0].len, xs[i][j], order)
+
 proc stackMatrix*[M, N: static[int]](a: var DoubleArray32[M, N], order = colMajor): Matrix[float32] =
-  Matrix[float32](
+  let M1: int = if order == colMajor: N else: M
+  let N1: int = if order == colMajor: M else: N
+  result = Matrix[float32](
     order: order,
     fp: addr a[0][0],
-    M: if order == colMajor: N else: M,
-    N: if order == colMajor: M else: N,
+    M: M1,
+    N: N1,
     ld: N
   )
 
 proc stackMatrix*[M, N: static[int]](a: var DoubleArray64[M, N], order = colMajor): Matrix[float64] =
+  let M1: int = if order == colMajor: N else: M
+  let N1: int = if order == colMajor: M else: N
   Matrix[float64](
     order: order,
     fp: addr a[0][0],
+    M: M1,
+    N: N1,
+    ld: N
+  )
+
+proc sharedMatrix*(M, N: int, A: typedesc, order = colMajor): Matrix[A] =
+  Matrix[A](
+    order: order,
+    fp: cast[ptr A](allocShared0(M * N * sizeof(A))),
     M: if order == colMajor: N else: M,
     N: if order == colMajor: M else: N,
     ld: N
   )
 
-proc diag*[A: SomeReal](xs: varargs[A]): Matrix[A] =
+proc dealloc*[A](m: Matrix[A]) =
+  deallocShared(cast[pointer](m.fp))
+
+proc diag*[A: SomeFloat](xs: varargs[A]): Matrix[A] =
   let n = xs.len
   result = zeros(n, n, A)
   result.shape.incl(Diagonal)
@@ -245,33 +276,6 @@ proc `[]`*[A](m: Matrix[A], i, j: int): A {. inline .} =
     return elColMajor(mp, m, i, j)
   else:
     return elRowMajor(mp, m, i, j)
-
-type All* = object
-
-proc `[]`*[A](m: Matrix[A], rows, cols: Slice[int]): Matrix[A] =
-  checkBounds(rows.a >= 0 and rows.b < m.M)
-  checkBounds(cols.a >= 0 and cols.b < m.N)
-  let
-    mp = cast[CPointer[A]](m.fp)
-    fp =
-      if m.order == colMajor:
-        addr(elColMajor(mp, m, rows.a, cols.a))
-      else:
-        addr(elRowMajor(mp, m, rows.a, cols.a))
-  result = Matrix[A](
-    order: m.order,
-    M: (rows.b - rows.a + 1),
-    N: (cols.b - cols.a + 1),
-    ld: m.ld,
-    data: m.data,
-    fp: fp
-  )
-
-proc `[]`*[A](m: Matrix[A], rows: Slice[int], cols: typedesc[All]): Matrix[A] =
-  m[rows, 0 ..< m.N]
-
-proc `[]`*[A](m: Matrix[A], rows: typedesc[All], cols: Slice[int]): Matrix[A] =
-  m[0 ..< m.M, cols]
 
 proc `[]=`*[A](m: var Matrix[A], i, j: int, val: A) {. inline .} =
   checkBounds(i >= 0 and i < m.M)
@@ -509,49 +513,218 @@ proc asVector*[A](m: Matrix[A]): Vector[A] =
   else:
     vector(toSeq(m.items))
 
+# Stacking
+
+proc hstack*[A](vectors: varargs[Vector[A]]): Vector[A] =
+  var L = 0
+  for v in vectors:
+    L += v.len
+  result = vector(newSeq[A](L))
+  var pos = 0
+  for v in vectors:
+    for j, x in v:
+      result.data[pos + j] = x
+    pos += v.len
+
+template concat*[A](vectors: varargs[Vector[A]]): Vector[A] =
+  hstack(vectors)
+
+template vstack*[A](vectors: varargs[Vector[A]]): Matrix[A] =
+  matrix(@vectors)
+
+proc hstack*[A](matrices: varargs[Matrix[A]]): Matrix[A] =
+  let M = matrices[0].M
+  when compileOption("assertions"):
+    for m in matrices:
+      checkDim(M == m.M, "The vertical dimensions do not match")
+  var N = 0
+  for m in matrices:
+    N += m.N
+  result = matrix[A](colMajor, M, N, newSeq[A](M * N))
+  var pos = 0
+  for m in matrices:
+    for i in 0 ..< m.M:
+      for j in 0 ..< m.N:
+        result[i, pos + j] = m[i, j]
+    pos += m.N
+
+proc vstack*[A](matrices: varargs[Matrix[A]]): Matrix[A] =
+  let N = matrices[0].N
+  when compileOption("assertions"):
+    for m in matrices:
+      checkDim(N == m.N, "The horizontal dimensions do not match")
+  var M = 0
+  for m in matrices:
+    M += m.M
+  result = matrix[A](colMajor, M, N, newSeq[A](M * N))
+  var pos = 0
+  for m in matrices:
+    for i in 0 ..< m.M:
+      for j in 0 ..< m.N:
+        result[pos + i, j] = m[i, j]
+    pos += m.M
+
+# Slice accessors
+
+proc pointerAt[A](v: Vector[A], i: int): ptr A {. inline .} =
+  let s = cast[CPointer[A]](v.fp)
+  addr s[i]
+
+proc `[]`*[A](v: Vector[A], s: Slice[int]): Vector[A] {. inline .} =
+  Vector[A](data: v.data, fp: v.pointerAt(s.a), step: v.step, len: s.b - s.a + 1)
+
+proc `[]=`*[A](v: var Vector[A], s: Slice[int], val: Vector[A]) {. inline .} =
+  checkBounds(s.a >= 0 and s.b < v.len)
+  checkDim(s.b - s.a + 1 == val.len)
+  when A is SomeFloat:
+    copy(val.len, val.fp, val.step, v.pointerAt(s.a), v.step)
+  else:
+    var count = 0
+    for i in s:
+      v[i] = val[count]
+      count += 1
+
+type All* = object
+
+proc `[]`*[A](m: Matrix[A], rows, cols: Slice[int]): Matrix[A] =
+  checkBounds(rows.a >= 0 and rows.b < m.M)
+  checkBounds(cols.a >= 0 and cols.b < m.N)
+  let
+    mp = cast[CPointer[A]](m.fp)
+    fp =
+      if m.order == colMajor:
+        addr(elColMajor(mp, m, rows.a, cols.a))
+      else:
+        addr(elRowMajor(mp, m, rows.a, cols.a))
+  result = Matrix[A](
+    order: m.order,
+    M: (rows.b - rows.a + 1),
+    N: (cols.b - cols.a + 1),
+    ld: m.ld,
+    data: m.data,
+    fp: fp
+  )
+
+proc `[]`*[A](m: Matrix[A], rows: Slice[int], cols: typedesc[All]): Matrix[A] =
+  m[rows, 0 ..< m.N]
+
+proc `[]`*[A](m: Matrix[A], rows: typedesc[All], cols: Slice[int]): Matrix[A] =
+  m[0 ..< m.M, cols]
+
+proc `[]=`*[A](m: var Matrix[A], rows, cols: Slice[int], val: Matrix[A]) {. inline .} =
+  checkBounds(rows.a >= 0 and rows.b < m.M)
+  checkBounds(cols.a >= 0 and cols.b < m.N)
+  checkDim(rows.len == val.M)
+  checkDim(cols.len == val.N)
+  let
+    mp = cast[CPointer[A]](m.fp)
+    vp = cast[CPointer[A]](val.fp)
+  when A is SomeFloat:
+    if m.order == colMajor:
+      if val.order == colMajor:
+        var col = 0
+        for c in cols:
+          copy(val.M, addr elColMajor(vp, val, 0, col), 1, addr elColMajor(mp, m, rows.a, c), 1)
+          col += 1
+      else:
+        var col = 0
+        for c in cols:
+          copy(val.M, addr elRowMajor(vp, val, 0, col), val.ld, addr elColMajor(mp, m, rows.a, c), 1)
+          col += 1
+    else:
+      if val.order == colMajor:
+        var row = 0
+        for r in rows:
+          copy(val.N, addr elColMajor(vp, val, row, 0), val.ld, addr elRowMajor(mp, m, r, cols.a), 1)
+          row += 1
+      else:
+        var row = 0
+        for r in rows:
+          copy(val.N, addr elRowMajor(vp, val, row, 0), 1, addr elRowMajor(mp, m, r, cols.a), 1)
+          row += 1
+  else:
+    var row = 0
+    var col = 0
+    if m.order == colMajor:
+      if val.order == colMajor:
+        for r in rows:
+          col = 0
+          for c in cols:
+            elColMajor(mp, m, r, c) = elColMajor(vp, val, row, col)
+            col += 1
+          row += 1
+      else:
+        for r in rows:
+          col = 0
+          for c in cols:
+            elColMajor(mp, m, r, c) = elRowMajor(vp, val, row, col)
+            col += 1
+          row += 1
+    else:
+      if val.order == colMajor:
+        for r in rows:
+          col = 0
+          for c in cols:
+            elRowMajor(mp, m, r, c) = elColMajor(vp, val, row, col)
+            col += 1
+          row += 1
+      else:
+        for r in rows:
+          col = 0
+          for c in cols:
+            elRowMajor(mp, m, r, c) = elRowMajor(vp, val, row, col)
+            col += 1
+          row += 1
+
+proc `[]=`*[A](m: var Matrix[A], rows: Slice[int], cols: typedesc[All], val: Matrix[A]) {. inline .} =
+  m[rows, 0 ..< m.N] = val
+
+proc `[]=`*[A](m: var Matrix[A], rows: typedesc[All], cols: Slice[int], val: Matrix[A]) {. inline .} =
+  m[0 ..< m.M, cols] = val
+
 # BLAS level 1 operations
 
-proc `*=`*[A: SomeReal](v: var Vector[A], k: A) {. inline .} =
+proc `*=`*[A: SomeFloat](v: var Vector[A], k: A) {. inline .} =
   scal(v.len, k, v.fp, v.step)
 
-proc `*`*[A: SomeReal](v: Vector[A], k: A): Vector[A] {. inline .} =
+proc `*`*[A: SomeFloat](v: Vector[A], k: A): Vector[A] {. inline .} =
   let N = v.len
   result = vector(newSeq[A](N))
   copy(N, v.fp, v.step, result.fp, result.step)
   scal(N, k, result.fp, result.step)
 
-proc `+=`*[A: SomeReal](v: var Vector[A], w: Vector[A]) {. inline .} =
+proc `+=`*[A: SomeFloat](v: var Vector[A], w: Vector[A]) {. inline .} =
   checkDim(v.len == w.len)
   let N = v.len
   axpy(N, 1, w.fp, w.step, v.fp, v.step)
 
-proc `+`*[A: SomeReal](v, w: Vector[A]): Vector[A]  {. inline .} =
+proc `+`*[A: SomeFloat](v, w: Vector[A]): Vector[A]  {. inline .} =
   checkDim(v.len == w.len)
   let N = v.len
   result = vector(newSeq[A](N))
   copy(N, v.fp, v.step, result.fp, result.step)
   axpy(N, 1, w.fp, w.step, result.fp, result.step)
 
-proc `-=`*[A: SomeReal](v: var Vector[A], w: Vector[A]) {. inline .} =
+proc `-=`*[A: SomeFloat](v: var Vector[A], w: Vector[A]) {. inline .} =
   checkDim(v.len == w.len)
   let N = v.len
   axpy(N, -1, w.fp, w.step, v.fp, v.step)
 
-proc `-`*[A: SomeReal](v, w: Vector[A]): Vector[A]  {. inline .} =
+proc `-`*[A: SomeFloat](v, w: Vector[A]): Vector[A]  {. inline .} =
   checkDim(v.len == w.len)
   let N = v.len
   result = vector(newSeq[A](N))
   copy(N, v.fp, v.step, result.fp, result.step)
   axpy(N, -1, w.fp, w.step, result.fp, result.step)
 
-proc `*`*[A: SomeReal](v, w: Vector[A]): A {. inline .} =
+proc `*`*[A: SomeFloat](v, w: Vector[A]): A {. inline .} =
   checkDim(v.len == w.len)
   return dot(v.len, v.fp, v.step, w.fp, w.step)
 
-proc l_2*[A: SomeReal](v: Vector[A]): auto {. inline .} =
+proc l_2*[A: SomeFloat](v: Vector[A]): auto {. inline .} =
   nrm2(v.len, v.fp, v.step)
 
-proc l_1*[A: SomeReal](v: Vector[A]): auto {. inline .} =
+proc l_1*[A: SomeFloat](v: Vector[A]): auto {. inline .} =
   asum(v.len, v.fp, v.step)
 
 proc maxIndex*[A](v: Vector[A]): tuple[i: int, val: A] =
@@ -583,7 +756,7 @@ template len(m: Matrix): int = m.M * m.N
 template initLike[A](r, m: Matrix[A]) =
   r = matrix[A](m.order, m.M, m.N, newSeq[A](m.len))
 
-proc `*=`*[A: SomeReal](m: var Matrix[A], k: A) {. inline .} =
+proc `*=`*[A: SomeFloat](m: var Matrix[A], k: A) {. inline .} =
   if m.isFull:
     scal(m.M * m.N, k, m.fp, 1)
   else:
@@ -594,7 +767,7 @@ proc `*=`*[A: SomeReal](m: var Matrix[A], k: A) {. inline .} =
       for r in m.rows:
         scal(m.N, k, r.fp, r.step)
 
-proc `*`*[A: SomeReal](m: Matrix[A], k: A): Matrix[A]  {. inline .} =
+proc `*`*[A: SomeFloat](m: Matrix[A], k: A): Matrix[A]  {. inline .} =
   if m.isFull:
     result.initLike(m)
     copy(m.len, m.fp, 1, result.fp, 1)
@@ -602,14 +775,14 @@ proc `*`*[A: SomeReal](m: Matrix[A], k: A): Matrix[A]  {. inline .} =
     result = m.clone()
   scal(m.len, k, result.fp, 1)
 
-template `*`*[A: SomeReal](k: A, v: Vector[A] or Matrix[A]): auto = v * k
+template `*`*[A: SomeFloat](k: A, v: Vector[A] or Matrix[A]): auto = v * k
 
-template `/`*[A: SomeReal](v: Vector[A] or Matrix[A], k: A): auto = v * (1 / k)
+template `/`*[A: SomeFloat](v: Vector[A] or Matrix[A], k: A): auto = v * (1 / k)
 
-template `/=`*[A: SomeReal](v: var Vector[A] or var Matrix[A], k: A) =
+template `/=`*[A: SomeFloat](v: var Vector[A] or var Matrix[A], k: A) =
   v *= (1 / k)
 
-proc `+=`*[A: SomeReal](a: var Matrix[A], b: Matrix[A]) {. inline .} =
+proc `+=`*[A: SomeFloat](a: var Matrix[A], b: Matrix[A]) {. inline .} =
   checkDim(a.M == b.M and a.N == a.N)
   if a.isFull and b.isFull and a.order == b.order:
     axpy(a.M * a.N, 1, b.fp, 1, a.fp, 1)
@@ -624,7 +797,7 @@ proc `+=`*[A: SomeReal](a: var Matrix[A], b: Matrix[A]) {. inline .} =
         let (i, j) = t
         elRowMajor(ap, a, i, j) += x
 
-proc `+`*[A: SomeReal](a, b: Matrix[A]): Matrix[A] {. inline .} =
+proc `+`*[A: SomeFloat](a, b: Matrix[A]): Matrix[A] {. inline .} =
   if a.isFull:
     result.initLike(a)
     copy(a.len, a.fp, 1, result.fp, 1)
@@ -632,7 +805,7 @@ proc `+`*[A: SomeReal](a, b: Matrix[A]): Matrix[A] {. inline .} =
     result = a.clone()
   result += b
 
-proc `-=`*[A: SomeReal](a: var Matrix[A], b: Matrix[A]) {. inline .} =
+proc `-=`*[A: SomeFloat](a: var Matrix[A], b: Matrix[A]) {. inline .} =
   checkDim(a.M == b.M and a.N == a.N)
   if a.isFull and b.isFull and a.order == b.order:
     axpy(a.M * a.N, -1, b.fp, 1, a.fp, 1)
@@ -647,7 +820,7 @@ proc `-=`*[A: SomeReal](a: var Matrix[A], b: Matrix[A]) {. inline .} =
         let (i, j) = t
         elRowMajor(ap, a, i, j) -= x
 
-proc `-`*[A: SomeReal](a, b: Matrix[A]): Matrix[A] {. inline .} =
+proc `-`*[A: SomeFloat](a, b: Matrix[A]): Matrix[A] {. inline .} =
   if a.isFull:
     result.initLike(a)
     copy(a.len, a.fp, 1, result.fp, 1)
@@ -655,7 +828,7 @@ proc `-`*[A: SomeReal](a, b: Matrix[A]): Matrix[A] {. inline .} =
     result = a.clone()
   result -= b
 
-proc l_2*[A: SomeReal](m: Matrix[A]): A {. inline .} =
+proc l_2*[A: SomeFloat](m: Matrix[A]): A {. inline .} =
   if m.isFull:
     result = nrm2(m.len, m.fp, 1)
   else:
@@ -663,7 +836,7 @@ proc l_2*[A: SomeReal](m: Matrix[A]): A {. inline .} =
     for x in m:
       result += x * x
 
-proc l_1*[A: SomeReal](m: Matrix[A]): A {. inline .} =
+proc l_1*[A: SomeFloat](m: Matrix[A]): A {. inline .} =
   if m.isFull:
     result = asum(m.len, m.fp, 1)
   else:
@@ -693,14 +866,14 @@ proc T*[A](m: Matrix[A]): Matrix[A] =
 
 # BLAS level 2 operations
 
-proc `*`*[A: SomeReal](a: Matrix[A], v: Vector[A]): Vector[A]  {. inline .} =
+proc `*`*[A: SomeFloat](a: Matrix[A], v: Vector[A]): Vector[A]  {. inline .} =
   checkDim(a.N == v.len)
   result = vector(newSeq[A](a.M))
   gemv(a.order, noTranspose, a.M, a.N, 1, a.fp, a.ld, v.fp, v.step, 0, result.fp, result.step)
 
 # BLAS level 3 operations
 
-proc `*`*[A: SomeReal](a, b: Matrix[A]): Matrix[A] {. inline .} =
+proc `*`*[A: SomeFloat](a, b: Matrix[A]): Matrix[A] {. inline .} =
   let
     M = a.M
     K = a.N
@@ -728,10 +901,10 @@ template compareApprox(a, b: Vector or Matrix): bool =
     dNorm = l_1(a - b)
   (dNorm / (aNorm + bNorm)) < epsilon
 
-proc `=~`*[A: SomeReal](v, w: Vector[A]): bool =
+proc `=~`*[A: SomeFloat](v, w: Vector[A]): bool =
   compareApprox(v, w)
 
-proc `=~`*[A: SomeReal](v, w: Matrix[A]): bool =
+proc `=~`*[A: SomeFloat](v, w: Matrix[A]): bool =
   compareApprox(v, w)
 
 template `!=~`*(a, b: Vector or Matrix): bool =
@@ -762,12 +935,12 @@ template makeUniversal*(fname: untyped) =
   when not compiles(fname(0'f32)):
     proc fname*(x: float32): float32 = fname(x.float64).float32
 
-  proc fname*[A: SomeReal](v: Vector[A]): Vector[A] =
+  proc fname*[A: SomeFloat](v: Vector[A]): Vector[A] =
     result = vector(newSeq[A](v.len))
     for i, x in v:
       result.data[i] = fname(x)
 
-  proc fname*[A: SomeReal](m: Matrix[A]): Matrix[A] =
+  proc fname*[A: SomeFloat](m: Matrix[A]): Matrix[A] =
     m.map(fname)
 
   export fname
@@ -777,12 +950,12 @@ template makeUniversalLocal*(fname: untyped) =
   when not compiles(fname(0'f32)):
     proc fname(x: float32): float32 = fname(x.float64).float32
 
-  proc fname[A: SomeReal](v: Vector[A]): Vector[A] =
+  proc fname[A: SomeFloat](v: Vector[A]): Vector[A] =
     result = vector(newSeq[A](v.len))
     for i, x in v:
       result.data[i] = fname(x)
 
-  proc fname[A: SomeReal](m: Matrix[A]): Matrix[A] =
+  proc fname[A: SomeFloat](m: Matrix[A]): Matrix[A] =
     m.map(fname)
 
 makeUniversal(sqrt)
@@ -821,10 +994,10 @@ proc cumsum*[A](v: Vector[A]): Vector[A] =
 proc sum*[A](v: Vector[A]): A =
   foldl(v, a + b)
 
-proc mean*[A: SomeReal](v: Vector[A]): A {.inline.} =
+proc mean*[A: SomeFloat](v: Vector[A]): A {.inline.} =
   sum(v) / A(v.len)
 
-proc variance*[A: SomeReal](v: Vector[A]): A =
+proc variance*[A: SomeFloat](v: Vector[A]): A =
   let m = v.mean
   result = v[0] - v[0]
   for x in v:
@@ -832,7 +1005,7 @@ proc variance*[A: SomeReal](v: Vector[A]): A =
     result += y * y
   result /= A(v.len)
 
-template stddev*[A: SomeReal](v: Vector[A]): A =
+template stddev*[A: SomeFloat](v: Vector[A]): A =
   sqrt(variance(v))
 
 template sum*(m: Matrix): auto = m.asVector.sum
@@ -857,19 +1030,21 @@ template countRw() =
   when defined(neoCountRewrites):
     inc numRewrites
 
-proc linearCombination[A: SomeReal](a: A, v, w: Vector[A]): Vector[A]  {. inline .} =
+proc linearCombination[A: SomeFloat](a: A, v, w: Vector[A]): Vector[A]  {. inline .} =
+  checkDim(v.len == w.len)
   result = vector(newSeq[A](v.len))
   copy(v.len, v.fp, v.step, result.fp, result.step)
   axpy(v.len, a, w.fp, w.step, result.fp, result.step)
 
-proc linearCombinationMut[A: SomeReal](a: A, v: var Vector[A], w: Vector[A])  {. inline .} =
+proc linearCombinationMut[A: SomeFloat](a: A, v: var Vector[A], w: Vector[A])  {. inline .} =
+  checkDim(v.len == w.len)
   axpy(v.len, a, w.fp, w.step, v.fp, v.step)
 
-template rewriteLinearCombination*{v + `*`(w, a)}[A: SomeReal](a: A, v, w: Vector[A]): auto =
+template rewriteLinearCombination*{v + `*`(w, a)}[A: SomeFloat](a: A, v, w: Vector[A]): auto =
   countRw()
   linearCombination(a, v, w)
 
-template rewriteLinearCombinationMut*{v += `*`(w, a)}[A: SomeReal](a: A, v: var Vector[A], w: Vector[A]): auto =
+template rewriteLinearCombinationMut*{v += `*`(w, a)}[A: SomeFloat](a: A, v: var Vector[A], w: Vector[A]): auto =
   countRw()
   linearCombinationMut(a, v, w)
 
@@ -912,7 +1087,7 @@ template solveVector(M, a, b: untyped): auto =
   if info > 0:
     raise newException(LinearAlgebraError, "Left hand matrix is singular or factorization failed")
 
-proc solve*[A: SomeReal](a, b: Matrix[A]): Matrix[A] {.inline.} =
+proc solve*[A: SomeFloat](a, b: Matrix[A]): Matrix[A] {.inline.} =
   checkDim(a.M == a.N, "Need a square matrix to solve the system")
   checkDim(a.M == b.M, "The dimensions are incompatible")
   var acopy = a.clone
@@ -923,7 +1098,7 @@ proc solve*[A: SomeReal](a, b: Matrix[A]): Matrix[A] {.inline.} =
     result = b.clone()
   solveMatrix(b.M, b.N, acopy, result)
 
-proc solve*[A: SomeReal](a: Matrix[A], b: Vector[A]): Vector[A] {.inline.} =
+proc solve*[A: SomeFloat](a: Matrix[A], b: Vector[A]): Vector[A] {.inline.} =
   checkDim(a.M == a.N, "Need a square matrix to solve the system")
   checkDim(a.M == b.len, "The dimensions are incompatible")
   var acopy = a.clone
@@ -933,7 +1108,7 @@ proc solve*[A: SomeReal](a: Matrix[A], b: Vector[A]): Vector[A] {.inline.} =
 
 template `\`*(a: Matrix, b: Matrix or Vector): auto = solve(a, b)
 
-proc inv*[A: SomeReal](a: Matrix[A]): Matrix[A] {.inline.} =
+proc inv*[A: SomeFloat](a: Matrix[A]): Matrix[A] {.inline.} =
   checkDim(a.M == a.N, "Need a square matrix to invert")
   result = eye(a.M, A)
   var acopy = a.clone
@@ -976,7 +1151,7 @@ proc ch(s: SchurCompute): char =
   of SchurCompute.Initialize: 'I'
   of SchurCompute.Provided: 'V'
 
-proc balance*[A: SomeReal](a: Matrix[A], op = BalanceOp.Both): BalanceResult[A] =
+proc balance*[A: SomeFloat](a: Matrix[A], op = BalanceOp.Both): BalanceResult[A] =
   checkDim(a.M == a.N, "`balance` requires a square matrix")
   assert(a.order == colMajor, "`balance` requires a column-major matrix")
   result = BalanceResult[A](
@@ -994,7 +1169,7 @@ proc balance*[A: SomeReal](a: Matrix[A], op = BalanceOp.Both): BalanceResult[A] 
   if info > 0:
     raise newException(LinearAlgebraError, "Failed to balance matrix")
 
-proc hessenberg*[A: SomeReal](a: Matrix[A]): Matrix[A] =
+proc hessenberg*[A: SomeFloat](a: Matrix[A]): Matrix[A] =
   checkDim(a.M == a.N, "`hessenberg` requires a square matrix")
   assert(a.order == colMajor, "`hessenberg` requires a column-major matrix")
   result = a.clone()
@@ -1019,7 +1194,7 @@ proc hessenberg*[A: SomeReal](a: Matrix[A]): Matrix[A] =
   if info > 0:
     raise newException(LinearAlgebraError, "Failed to reduce matrix to upper Hessenberg form")
 
-proc eigenvalues*[A: SomeReal](a: Matrix[A]): EigenValues[A] =
+proc eigenvalues*[A: SomeFloat](a: Matrix[A]): EigenValues[A] =
   checkDim(a.M == a.N, "`eigenvalues` requires a square matrix")
   assert(a.order == colMajor, "`eigenvalues` requires a column-major matrix")
   var
@@ -1060,7 +1235,7 @@ proc eigenvalues*[A: SomeReal](a: Matrix[A]): EigenValues[A] =
   if info > 0:
     raise newException(LinearAlgebraError, "Failed to find eigenvalues")
 
-proc schur*[A: SomeReal](a: Matrix[A]): SchurResult[A] =
+proc schur*[A: SomeFloat](a: Matrix[A]): SchurResult[A] =
   checkDim(a.M == a.N, "`schur` requires a square matrix")
   assert(a.order == colMajor, "`schur` requires a column-major matrix")
   result.factorization = a.clone()
@@ -1111,7 +1286,7 @@ proc tr*[A](a: Matrix[A]): A =
     result += ap[i * (1 + a.ld)]
 
 # TODO: pick a faster decomposition
-proc det*[A: SomeReal](a: Matrix[A]): A =
+proc det*[A: SomeFloat](a: Matrix[A]): A =
   checkDim(a.M == a.N, "`det` requires a square matrix")
   result  = A(1)
   let
